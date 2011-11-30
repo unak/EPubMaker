@@ -88,7 +88,7 @@ class EPubMaker
 
     files = []
     Dir.glob(File.join(@dir, "*")).sort.each_with_index do |src, idx|
-      dst = "%05d%s" % [idx, File.extname(src)]
+      dst = "%04d%s" % [idx+1, File.extname(src)]
       FileUtils.cp(src, File.join(data_dir, dst))
       files.push(dst)
     end
@@ -159,7 +159,7 @@ class EPubMaker
           refs.push(file)
         else
           f.puts %'    <item id="#{File.basename(file, ".*")}" href="data/#{file}" media-type="#{type}" fallback="#{File.basename(fallback = make_fallback(data_dir, file), ".*")}"/>'
-          f.puts %'    <item id="#{fallback.sub(/\..*$/, "")}" href="data/#{fallback}" media-type="#{XHTML}" />'
+          f.puts %'    <item id="#{File.basename(fallback, ".*")}" href="data/#{fallback}" media-type="#{XHTML}" />'
           if %r"^image/" =~ type
             refs.push(fallback)
           else
@@ -279,8 +279,8 @@ class EPubMaker
 
   # ファイルからタイトルを決定する
   def get_title(fullpath)
-    # TODO: <title>を抽出
-    File.basename(fullpath, ".*").sub(/-\d+$/, "")
+    # TODO: 可能なら<title>を抽出
+    "Page \##{File.basename(fullpath, ".*").sub(/-\d+$/, "").to_i(10)}"
   end
 
   # ePubファイル生成
