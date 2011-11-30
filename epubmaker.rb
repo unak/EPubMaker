@@ -109,10 +109,10 @@ class EPubMaker
     contents_dir = File.join(workdir, CONTENTS)
     bookid = SecureRandom.uuid
     title = File.basename(@dir)
-    make_opf(contents_dir, bookid, title, files)
+    refs = make_opf(contents_dir, bookid, title, files)
 
     # ncx
-    make_ncx(contents_dir, bookid, title, files)
+    make_ncx(contents_dir, bookid, title, refs)
   end
 
   # container.xml作成
@@ -133,6 +133,7 @@ class EPubMaker
   # OPFファイル作成
   def make_opf(contents_dir, bookid, title, files)
     data_dir = File.join(contents_dir, "data")
+    refs = []
 
     open(File.join(contents_dir, "package.opf"), "w") do |f|
       f.puts <<-EOF
@@ -150,11 +151,20 @@ class EPubMaker
       files.each do |file|
         type = MIME[File.extname(file).downcase]
         next unless type
-        if CORE[File.extname(file).downcase]
+
+        # 画像はいきなり表示できるはずだが、ダメなビューアーがはびこってるので
+        # XHTML化する
+        if CORE[File.extname(file).downcase] && %r"^image/" !~ type
           f.puts %'    <item id="#{File.basename(file, ".*")}" href="data/#{file}" media-type="#{type}" />'
+          refs.push(file)
         else
           f.puts %'    <item id="#{File.basename(file, ".*")}" href="data/#{file}" media-type="#{type}" fallback="#{File.basename(fallback = make_fallback(data_dir, file), ".*")}"/>'
           f.puts %'    <item id="#{fallback.sub(/\..*$/, "")}" href="data/#{fallback}" media-type="#{XHTML}" />'
+          if %r"^image/" =~ type
+            refs.push(fallback)
+          else
+            refs.file
+          end
         end
       end
 
@@ -163,7 +173,7 @@ class EPubMaker
   <spine toc="ncx" page-progression-direction="rtl">
       EOF
 
-      files.each do |file|
+      refs.each do |file|
         type = MIME[File.extname(file).downcase]
         next if !type || type == CSS
         f.puts %'    <itemref idref="#{file.sub(/\..*$/, "")}" />'
@@ -174,6 +184,8 @@ class EPubMaker
 </package>
       EOF
     end
+
+    refs
   end
 
   # itemのフォールバック用ファイル作成
