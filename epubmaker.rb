@@ -5,13 +5,17 @@ require "fileutils"
 require "securerandom"
 require "tmpdir"
 
-# EPub作成クラス
+#
+#= EPub作成クラス
+#
 class EPubMaker
-  ZIP = "zip"
-  UNZIP = "unzip"
+  ZIP = "zip"       # zip command
+  UNZIP = "unzip"   # unzip command
 
-  XHTML = "application/xhtml+xml"
-  CSS = "text/css"
+  XHTML = "application/xhtml+xml"   # :nodoc:
+  CSS = "text/css"                  # :nodoc:
+
+  # OPS core media types
   CORE = {
     ".gif" => "image/gif",
     ".jpg" => "image/jpeg",
@@ -25,24 +29,29 @@ class EPubMaker
     ".css" => CSS,
     ".xml" => "application/xml",
   }
+
+  # supported MIME types
   MIME = {
     ".tif" => "image/tiff",
     ".tiff" => "image/tiff",
     ".txt" => "text/plain",
   }.merge(CORE)
 
+  # finalizer用ディレクトリ削除コールバック生成
   def self.rmdir_callback(dir)
     proc do
       FileUtils.rm_r(dir)
     end
   end
 
+  # 初期化
   def initialize(epub, dir, zip)
     @epub = epub
     @dir = dir
     @zip = zip
   end
 
+  # 生成実行
   def run
     unzip_tmpdir if @zip
     workdir = make_workdir
@@ -52,8 +61,10 @@ class EPubMaker
   end
 
   private
-  CONTENTS = "OEBPS"
+  META = "META-INF"     # メタ情報を置く所
+  CONTENTS = "OEBPS"    # 実際の中身を置く所
 
+  # zipファイルな元ネタをテンポラリディレクトリに展開
   def unzip_tmpdir
     @dir = File.join(Dir.tmpdir, File.basename(@zip, ".zip"))
     Dir.mkdir(@dir)
@@ -62,6 +73,7 @@ class EPubMaker
     system(UNZIP, "-qq", "-o", @zip, "-d", @dir) || raise
   end
 
+  # 作業用ディレクトリ作成
   def make_workdir
     workdir = File.join(Dir.tmpdir, "#{File.basename(__FILE__, '.rb')}-" + File.basename(@dir))
     Dir.mkdir(workdir)
@@ -69,6 +81,7 @@ class EPubMaker
     workdir
   end
 
+  # 元ネタのうち必要なファイルを作業用ディレクトリにコピー
   def copy_files(workdir)
     data_dir = File.join(workdir, CONTENTS, "data")
     FileUtils.mkdir_p(data_dir)
@@ -82,16 +95,29 @@ class EPubMaker
     files
   end
 
+  # メタ情報等作成
   def make_meta(workdir, files)
     # mimetype
     open(File.join(workdir, "mimetype"), "w") do |f|
       f.print "application/epub+zip"
     end
 
-    meta_dir = File.join(workdir, "META-INF")
-    Dir.mkdir(meta_dir)
-
     # container.xml
+    make_container(File.join(workdir, META))
+
+    # package.opf
+    contents_dir = File.join(workdir, CONTENTS)
+    bookid = SecureRandom.uuid
+    title = File.basename(@dir)
+    make_opf(contents_dir, bookid, title, files)
+
+    # ncx
+    make_ncx(contents_dir, bookid, title, files)
+  end
+
+  # container.xml作成
+  def make_container(meta_dir)
+    Dir.mkdir(meta_dir)
     open(File.join(meta_dir, "container.xml"), "w") do |f|
       f.puts <<-EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -102,20 +128,19 @@ class EPubMaker
 </container>
       EOF
     end
+  end
 
-    contents_dir = File.join(workdir, CONTENTS)
+  # OPFファイル作成
+  def make_opf(contents_dir, bookid, title, files)
     data_dir = File.join(contents_dir, "data")
 
-    # package.opf
-    bookid = nil
-    title = nil
     open(File.join(contents_dir, "package.opf"), "w") do |f|
       f.puts <<-EOF
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="BookId" xml:lang="ja">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="BookId">#{bookid = SecureRandom.uuid}</dc:identifier>
-    <dc:title>#{title = File.basename(@dir)}</dc:title>
+    <dc:identifier id="BookId">#{bookid}</dc:identifier>
+    <dc:title>#{h title}</dc:title>
     <dc:language>ja</dc:language>
   </metadata>
   <manifest>
@@ -149,40 +174,9 @@ class EPubMaker
 </package>
       EOF
     end
-
-    # ncx
-    open(File.join(contents_dir, "toc.ncx"), "w") do |f|
-      f.puts <<-EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
-<ncx version="2005-1" xmlns="http://www.daisy.org/z3986/2005/ncx/" xml:lang="ja">
-<head>
-<meta name="dtb:uid" content="#{bookid}"/>
-<meta name="dtb:depth" content="1"/>
-<meta name="dtb:totalPageCount" content="0"/>
-<meta name="dtb:maxPageNumber" content="0"/>
-</head>
-
-<docTitle><text>#{title}</text></docTitle>
-
-<navMap>
-      EOF
-
-      files.each_with_index do |file, idx|
-        base = File.basename(file, ".*")
-        f.puts %'  <navPoint id="#{base}" playOrder="#{idx+1}">'
-        f.puts %'    <navLabel><text>#{base}</text></navLabel>'
-        f.puts %'    <content src="data/#{file}" />'
-        f.puts %'  </navPoint>'
-      end
-
-      f.puts <<-EOF
-</navMap>
-</ncx>
-      EOF
-    end
   end
 
+  # itemのフォールバック用ファイル作成
   def make_fallback(data_dir, file)
     type = MIME[File.extname(file).downcase]
     base = File.basename(file, ".*")
@@ -192,7 +186,7 @@ class EPubMaker
     when %r"^image/"
       open(File.join(data_dir, fallback), "w") do |f|
         f.puts <<-EOF
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ja" lang="ja">
@@ -209,7 +203,7 @@ class EPubMaker
     when %r"^text/"
       open(File.join(data_dir, fallback), "w") do |f|
         f.puts <<-EOF
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ja" lang="ja">
@@ -236,11 +230,51 @@ class EPubMaker
     fallback
   end
 
+  # NCXファイル作成
+  def make_ncx(contents_dir, bookid, title, files)
+    open(File.join(contents_dir, "toc.ncx"), "w") do |f|
+      f.puts <<-EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
+<ncx version="2005-1" xmlns="http://www.daisy.org/z3986/2005/ncx/" xml:lang="ja">
+<head>
+<meta name="dtb:uid" content="#{bookid}"/>
+<meta name="dtb:depth" content="1"/>
+<meta name="dtb:totalPageCount" content="0"/>
+<meta name="dtb:maxPageNumber" content="0"/>
+</head>
+
+<docTitle><text>#{h title}</text></docTitle>
+
+<navMap>
+      EOF
+
+      files.each_with_index do |file, idx|
+        base = File.basename(file, ".*")
+        f.puts %'  <navPoint id="#{base}" playOrder="#{idx+1}">'
+        f.puts %'    <navLabel><text>#{base}</text></navLabel>'
+        f.puts %'    <content src="data/#{file}" />'
+        f.puts %'  </navPoint>'
+      end
+
+      f.puts <<-EOF
+</navMap>
+</ncx>
+      EOF
+    end
+  end
+
+  # ePubファイル生成
   def pack_epub(workdir)
     File.unlink(@epub) if File.exist?(@epub)
     Dir.chdir(workdir) do
-      system(ZIP, "-X", "-r", "-9", "-D", "-q", @epub, "mimetype", "META-INF", CONTENTS) || raise
+      system(ZIP, "-X", "-r", "-9", "-D", "-q", @epub, "mimetype", META, CONTENTS) || raise
     end
+  end
+
+  # HTMLエスケープ
+  def h(str)
+    str.gsub(/[&\"<>]/, {'&' => '&amp;', '"' => '&qout;', '<' => '&lt;', '>' => '&gt;'})
   end
 end
 
