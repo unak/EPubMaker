@@ -163,7 +163,7 @@ class EPubMaker
           if %r"^image/" =~ type
             refs.push(fallback)
           else
-            refs.file
+            refs.push(file)
           end
         end
       end
@@ -279,12 +279,8 @@ class EPubMaker
 
   # ファイルからタイトルを決定する
   def get_title(fullpath)
-    if MIME[File.extname(fullpath).downcase] == XHTML
-      # TODO: <title>を抽出
-      File.basename(fullpath, ".*")
-    else
-      File.basename(fullpath, ".*")
-    end
+    # TODO: <title>を抽出
+    File.basename(fullpath, ".*").sub(/-\d+$/, "")
   end
 
   # ePubファイル生成
