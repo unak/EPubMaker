@@ -250,9 +250,10 @@ class EPubMaker
       EOF
 
       files.each_with_index do |file, idx|
+        label = get_title(File.join(contents_dir, "data", file))
         base = File.basename(file, ".*")
         f.puts %'  <navPoint id="#{base}" playOrder="#{idx+1}">'
-        f.puts %'    <navLabel><text>#{base}</text></navLabel>'
+        f.puts %'    <navLabel><text>#{h label}</text></navLabel>'
         f.puts %'    <content src="data/#{file}" />'
         f.puts %'  </navPoint>'
       end
@@ -261,6 +262,16 @@ class EPubMaker
 </navMap>
 </ncx>
       EOF
+    end
+  end
+
+  # ファイルからタイトルを決定する
+  def get_title(fullpath)
+    if MIME[File.extname(fullpath).downcase] == XHTML
+      # TODO: <title>を抽出
+      File.basename(fullpath, ".*")
+    else
+      File.basename(fullpath, ".*")
     end
   end
 
