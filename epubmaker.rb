@@ -35,6 +35,7 @@ class EPubMaker
     ".tif" => "image/tiff",
     ".tiff" => "image/tiff",
     ".txt" => "text/plain",
+    ".pdf" => "application/x-pdf",
   }.merge(CORE)
 
   # finalizer用ディレクトリ削除コールバック生成
@@ -45,18 +46,24 @@ class EPubMaker
   end
 
   # 初期化
-  def initialize(epub, dir, zip)
+  def initialize(epub, dir, zip, title, author = nil)
     @epub = epub
     @dir = dir
     @zip = zip
+    @title = title
+    @author = author
   end
 
   # 生成実行
   def run
-    unzip_tmpdir if @zip
-    workdir = make_workdir
-    files = copy_files(workdir)
-    make_meta(workdir, files)
+    if @zip
+      @dir = unzip_tmpdir(@zip = File.expand_path(@zip))
+    else
+      @dir = File.expand_path(@dir)
+    end
+    workdir = make_workdir(@dir)
+    files = copy_files(workdir, @dir)
+    make_meta(workdir, @dir, files)
     pack_epub(workdir)
   end
 
@@ -65,29 +72,30 @@ class EPubMaker
   CONTENTS = "OEBPS"    # 実際の中身を置く所
 
   # zipファイルな元ネタをテンポラリディレクトリに展開
-  def unzip_tmpdir
-    @dir = File.join(Dir.tmpdir, File.basename(@zip, ".zip"))
-    Dir.mkdir(@dir)
-    ObjectSpace.define_finalizer(self, self.class.rmdir_callback(@dir))
+  def unzip_tmpdir(zip)
+    dir = File.join(Dir.tmpdir, File.basename(zip, ".zip"))
+    Dir.mkdir(dir)
+    ObjectSpace.define_finalizer(self, self.class.rmdir_callback(dir))
 
-    system(UNZIP, "-qq", "-o", @zip, "-d", @dir) || raise
+    system(UNZIP, "-qq", "-o", zip, "-d", dir) || raise
+    dir
   end
 
   # 作業用ディレクトリ作成
-  def make_workdir
-    workdir = File.join(Dir.tmpdir, "#{File.basename(__FILE__, '.rb')}-" + File.basename(@dir))
+  def make_workdir(dir)
+    workdir = File.join(Dir.tmpdir, "#{File.basename(__FILE__, '.rb')}-" + File.basename(dir))
     Dir.mkdir(workdir)
     ObjectSpace.define_finalizer(self, self.class.rmdir_callback(workdir))
     workdir
   end
 
   # 元ネタのうち必要なファイルを作業用ディレクトリにコピー
-  def copy_files(workdir)
+  def copy_files(workdir, srcdir)
     data_dir = File.join(workdir, CONTENTS, "data")
     FileUtils.mkdir_p(data_dir)
 
     files = []
-    Dir.glob(File.join(@dir, "*")).sort.each_with_index do |src, idx|
+    Dir.glob(File.join(srcdir.encode('utf-8'), "*")).sort.each_with_index do |src, idx|
       dst = "%04d%s" % [idx+1, File.extname(src)]
       FileUtils.cp(src, File.join(data_dir, dst))
       files.push(dst)
@@ -96,7 +104,7 @@ class EPubMaker
   end
 
   # メタ情報等作成
-  def make_meta(workdir, files)
+  def make_meta(workdir, srcdir, files)
     # mimetype
     open(File.join(workdir, "mimetype"), "w") do |f|
       f.print "application/epub+zip"
@@ -108,11 +116,10 @@ class EPubMaker
     # package.opf
     contents_dir = File.join(workdir, CONTENTS)
     bookid = SecureRandom.uuid
-    title = File.basename(@dir)
-    refs = make_opf(contents_dir, bookid, title, files)
+    refs = make_opf(contents_dir, bookid, @title, @author, files)
 
     # ncx
-    make_ncx(contents_dir, bookid, title, refs)
+    make_ncx(contents_dir, bookid, @title, refs)
   end
 
   # container.xml作成
@@ -131,7 +138,7 @@ class EPubMaker
   end
 
   # OPFファイル作成
-  def make_opf(contents_dir, bookid, title, files)
+  def make_opf(contents_dir, bookid, title, author, files)
     data_dir = File.join(contents_dir, "data")
     refs = []
 
@@ -142,6 +149,11 @@ class EPubMaker
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="BookId">#{bookid}</dc:identifier>
     <dc:title>#{h title}</dc:title>
+      EOF
+
+      f.puts %'    <dc:creator opf:file-as="#{h author}" opf:role="aut">#{h author}</dc:creator>' if author
+
+      f.puts <<-EOF
     <dc:language>ja</dc:language>
   </metadata>
   <manifest>
@@ -237,7 +249,22 @@ class EPubMaker
         EOF
       end
     else
-      raise "Unsupporte type: #{type} (#{file})"
+      open(File.join(data_dir, fallback), "w") do |f|
+        f.puts <<-EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+   "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ja" lang="ja">
+  <head>
+  <title>#{base}</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  </head>
+  <body>
+    <a href="data/#{file}">#{file}</a>
+  </body>
+</html>
+        EOF
+      end
     end
     fallback
   end
@@ -300,7 +327,7 @@ end
 
 if __FILE__ == $0
   def usage
-    puts "#$0 <zipfile | directory> [-o epubfile]"
+    puts "#$0 <zipfile | directory> [-o epubfile] [-t title] [-a author]"
     exit 0
   end
 
@@ -312,6 +339,8 @@ if __FILE__ == $0
   zip = nil
   dir = nil
   epub = nil
+  title = nil
+  author = nil
 
   # コマンドライン処理
   until ARGV.empty?
@@ -325,9 +354,29 @@ if __FILE__ == $0
           error "-oオプションに出力ファイル名が指定されていません。"
           usage
         else
-          epub = ARGV.shift
+          epub = ARGV.shift.dup
         end
         epub += ".epub" unless /\.epub$/i =~ epub
+      when ?t
+        if opt.size > 2
+          title = opt[2..-1].lstrip
+        elsif ARGV.empty?
+          error "-tオプションに書籍名が指定されていません。"
+          usage
+        else
+          title = ARGV.shift.dup
+        end
+        title.encode!('utf-8')
+      when ?a
+        if opt.size > 2
+          author = opt[2..-1].lstrip
+        elsif ARGV.empty?
+          error "-aオプションに著者名が指定されていません。"
+          usage
+        else
+          author = ARGV.shift.dup
+        end
+        author.encode!('utf-8')
       when ?h
         usage
       else
@@ -355,6 +404,10 @@ if __FILE__ == $0
     usage
   end
 
-  maker = EPubMaker.new(epub, dir, zip)
+  unless title
+    title = File.basename(zip || dir, ".*").encode('utf-8')
+  end
+
+  maker = EPubMaker.new(epub, dir, zip, title, author)
   maker.run
 end
