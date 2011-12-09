@@ -4,6 +4,10 @@
 require "fileutils"
 require "securerandom"
 require "tmpdir"
+begin
+  require "jpeg"
+rescue LoadError
+end
 
 #
 #= EPub作成クラス
@@ -46,12 +50,18 @@ class EPubMaker
   end
 
   # 初期化
-  def initialize(epub, dir, zip, title, author = nil)
+  def initialize(epub, dir, zip, hash = {})
+    hash = hash.dup
     @epub = epub
     @dir = dir
     @zip = zip
-    @title = title
-    @author = author
+
+    @title = hash.delete(:title)
+    @author = hash.delete(:author)
+    @width = hash.delete(:width)
+    @height = hash.delete(:height)
+    @verbose = hash.delete(:verbose){false}
+    raise ArgumentError, "unknown paramater: #{hash}" if hash.size > 0
   end
 
   # 生成実行
@@ -95,16 +105,73 @@ class EPubMaker
     FileUtils.mkdir_p(data_dir)
 
     files = []
-    Dir.glob(File.join(srcdir.encode('utf-8'), "*")).sort.each_with_index do |src, idx|
+    srcs = Dir.glob(File.join(srcdir, "*")).sort
+    dots = 0
+    srcs.each_with_index do |src, idx|
+      unless @verbose
+        now = idx * 80 / srcs.size
+        if now > dots
+          print '.' * (now - dots)
+          STDOUT.flush
+          dots = now
+        end
+      end
       dst = "%04d%s" % [idx+1, File.extname(src)]
-      FileUtils.cp(src, File.join(data_dir, dst))
+      print '[%3d/%3d] %s => %s' % [idx + 1, srcs.size, src, dst] if @verbose
+      if /\.jpg$/i =~ src && (@width || @height)
+        img = nil
+        open(src, "rb") do |f|
+          img = JPEG.read(f)
+        end
+        print " (#{img.width} x #{img.height} => " if @verbose
+
+        # grayscaleであればclippingする
+        if img.gray?
+          clip = img.level(10, 80).clip
+          if clip && ((img.width - clip.width) < img.width * 85 / 100 ||
+            (img.height - clip.height) < img.height * 85 / 100)
+            # 縦か横が15%以上削減できるならたぶんテキスト主体
+            img = clip
+          else
+            # そうでなければたぶんイラスト主体
+            #img = img.level(0, 90, true)
+          end
+        end
+
+        # 必要ならサイズ変換
+        width, height = @width, @height
+        if img.width > width || img.height > height
+          sw = width / img.width.to_f
+          sh = height / img.height.to_f
+          if sw < sh
+            height = (sw * img.height).to_i
+          else
+            width = (sh * img.width).to_i
+          end
+        end
+        puts "#{width} x #{height})" if @verbose
+        img = img.bicubic(width, height)
+        img.quality = 80
+        open(File.join(data_dir, dst), "wb") do |f|
+          JPEG.write(img, f)
+        end
+      else
+        FileUtils.cp(src, File.join(data_dir, dst))
+      end
       files.push(dst)
     end
+    puts unless @verbose
+
     files
   end
 
   # メタ情報等作成
   def make_meta(workdir, srcdir, files)
+    if @verbose
+      print 'creating meta data...'
+      STDOUT.flush
+    end
+
     # mimetype
     open(File.join(workdir, "mimetype"), "w") do |f|
       f.print "application/epub+zip"
@@ -120,6 +187,8 @@ class EPubMaker
 
     # ncx
     make_ncx(contents_dir, bookid, @title, refs)
+
+    puts if @verbose
   end
 
   # container.xml作成
@@ -312,10 +381,14 @@ class EPubMaker
 
   # ePubファイル生成
   def pack_epub(workdir)
+    print 'creating ePub package...' if @verbose
+
     File.unlink(@epub) if File.exist?(@epub)
     Dir.chdir(workdir) do
       system(ZIP, "-X", "-r", "-9", "-D", "-q", @epub, "mimetype", META, CONTENTS) || raise
     end
+
+    puts if @verbose
   end
 
   # HTMLエスケープ
@@ -327,7 +400,13 @@ end
 
 if __FILE__ == $0
   def usage
-    puts "#$0 <zipfile | directory> [-o epubfile] [-t title] [-a author]"
+    puts <<-EOS
+#$0 <zipfile | directory> [-o epubfile] [-t title] [-a author] [-s WxH]
+
+-s WxH  SONY Reader: 584x754
+        Kindle2: 560x742
+        Xperia(FBReader): 480x800
+    EOS
     exit 0
   end
 
@@ -341,6 +420,9 @@ if __FILE__ == $0
   epub = nil
   title = nil
   author = nil
+  width = nil
+  height = nil
+  verbose = false
 
   # コマンドライン処理
   until ARGV.empty?
@@ -377,6 +459,26 @@ if __FILE__ == $0
           author = ARGV.shift.dup
         end
         author.encode!('utf-8')
+      when ?s
+        if opt.size > 2
+          size = opt[2..-1].lstrip
+        elsif ARGV.empty?
+          error "-sオプションにサイズが指定されていません。"
+          usage
+        else
+          size = ARGV.shift.dup
+        end
+        unless /^(\d+)x(\d+)$/ =~ size
+          error "-sオプションの指定は 幅x高さ でなければいけません。"
+          usage
+        end
+        unless defined?(JPEG)
+          error "-sオプションの指定にはJPEGライブラリが必要です。"
+        end
+        width = $1.to_i
+        height = $2.to_i
+      when ?v
+        verbose = true
       when ?h
         usage
       else
@@ -408,6 +510,6 @@ if __FILE__ == $0
     title = File.basename(zip || dir, ".*").encode('utf-8')
   end
 
-  maker = EPubMaker.new(epub, dir, zip, title, author)
+  maker = EPubMaker.new(epub, dir, zip, title: title, author: author, width: width, height: height, verbose: verbose)
   maker.run
 end
