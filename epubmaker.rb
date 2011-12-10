@@ -401,11 +401,15 @@ end
 if __FILE__ == $0
   def usage
     puts <<-EOS
-#$0 <zipfile | directory> [-o epubfile] [-t title] [-a author] [-s WxH]
+#$0 <zipfile | directory> [-o epubfile] [-t title] [-a author] [-s WxH] [-v]
 
--s WxH  SONY Reader: 584x754
-        Kindle2: 560x742
-        Xperia(FBReader): 480x800
+-o epubfile     output filename
+-t title        title of the book
+-a author       outher of the book
+-s WxH          SONY Reader: 584x754
+                Kindle2: 560x742
+                Xperia(FBReader): 480x800
+-v              verbose
     EOS
     exit 0
   end
@@ -507,7 +511,12 @@ if __FILE__ == $0
   end
 
   unless title
-    title = File.basename(zip || dir, ".*").encode('utf-8')
+    title = File.basename(zip || dir, ".*").encode('utf-8').gsub(/_/, ' ')
+    unless author
+      tmp = title.split(/-/)
+      title = tmp[0...-1].join("-")
+      author = tmp[-1]
+    end
   end
 
   maker = EPubMaker.new(epub, dir, zip, title: title, author: author, width: width, height: height, verbose: verbose)
