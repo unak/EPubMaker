@@ -127,7 +127,7 @@ class EPubMaker
 
         # grayscaleであればclippingする
         if img.gray?
-          clip = img.level(10, 80).clip
+          clip, = img.level(10, 80).clip
           if clip && ((img.width - clip.width) < img.width * 85 / 100 ||
             (img.height - clip.height) < img.height * 85 / 100)
             # 縦か横が15%以上削減できるならたぶんテキスト主体
