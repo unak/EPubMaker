@@ -60,6 +60,7 @@ class EPubMaker
     @author = hash.delete(:author)
     @width = hash.delete(:width)
     @height = hash.delete(:height)
+    @clip = hash.delete(:clip)
     @verbose = hash.delete(:verbose){false}
     raise ArgumentError, "unknown paramater: #{hash}" if hash.size > 0
   end
@@ -104,9 +105,53 @@ class EPubMaker
     data_dir = File.join(workdir, CONTENTS, "data")
     FileUtils.mkdir_p(data_dir)
 
-    files = []
     srcs = Dir.glob(File.join(srcdir, "*")).sort
     dots = 0
+
+    # クリッピング領域算出(左右ページがあるので結果は配列)
+    print "loading images..." if @verbose
+    STDOUT.flush
+
+    lpages = []
+    rpages = []
+    images = {}
+    srcs.each_with_index do |src, idx|
+      if /\.jpg$/i =~ src
+        img = nil
+        open(src, "rb") do |f|
+          img = JPEG.read(f)
+        end
+
+        if @clip && img.gray?
+          leveled = img.level(10, 80)
+          clip, x1, y1, x2, y2 = leveled.clip
+          # 17 = 約6%
+          dw = img.width / 17
+          dh = img.height / 17
+          if (x1 >= dw && y1 >= dh) ||
+            ((img.width - x2) >= dw && (img.height - y2) >= dh)
+            if idx.even?
+              rpages << [x1, y1, x2, y2]
+            else
+              lpages << [x1, y1, x2, y2]
+            end
+            img = leveled
+            img.instance_variable_set(:@target, true)
+          end
+        end
+
+        images[idx] = img
+      end
+    end
+
+    # 10%ラインを抽出
+    left = [rpages.map{|r| r[0]}.sort[rpages.size / 10], lpages.map{|r| r[0]}.sort[lpages.size / 10]]
+    top = [rpages.map{|r| r[1]}.sort[rpages.size / 10], lpages.map{|r| r[1]}.sort[lpages.size / 10]]
+    right = [rpages.map{|r| r[2]}.sort[-rpages.size / 10], lpages.map{|r| r[2]}.sort[-lpages.size / 10]]
+    bottom = [rpages.map{|r| r[3]}.sort[-rpages.size / 10], lpages.map{|r| r[3]}.sort[-lpages.size / 10]]
+    puts if @verbose
+
+    files = []
     srcs.each_with_index do |src, idx|
       unless @verbose
         now = idx * 80 / srcs.size
@@ -118,24 +163,13 @@ class EPubMaker
       end
       dst = "%04d%s" % [idx+1, File.extname(src)]
       print '[%3d/%3d] %s => %s' % [idx + 1, srcs.size, src, dst] if @verbose
-      if /\.jpg$/i =~ src && (@width || @height)
-        img = nil
-        open(src, "rb") do |f|
-          img = JPEG.read(f)
-        end
+      if images[idx] && (@width || @height)
+        img = images[idx]
         print " (#{img.width} x #{img.height} => " if @verbose
 
-        # grayscaleであればclippingする
-        if img.gray?
-          clip, = img.level(10, 80).clip
-          if clip && ((img.width - clip.width) < img.width * 85 / 100 ||
-            (img.height - clip.height) < img.height * 85 / 100)
-            # 縦か横が15%以上削減できるならたぶんテキスト主体
-            img = clip
-          else
-            # そうでなければたぶんイラスト主体
-            #img = img.level(0, 90, true)
-          end
+        # clipping対象であればclippingする
+        if img.instance_variable_get(:@target)
+          img, = img.clip(left[idx%2], top[idx%2], right[idx%2], bottom[idx%2])
         end
 
         # 必要ならサイズ変換
@@ -401,7 +435,7 @@ end
 if __FILE__ == $0
   def usage
     puts <<-EOS
-#$0 <zipfile | directory> [-o epubfile] [-t title] [-a author] [-s WxH] [-v]
+#$0 <zipfile | directory> [-o epubfile] [-t title] [-a author] [-s WxH] [-c] [-v]
 
 -o epubfile     output filename
 -t title        title of the book
@@ -409,6 +443,7 @@ if __FILE__ == $0
 -s WxH          SONY Reader: 584x754
                 Kindle2: 560x742
                 Xperia(FBReader): 480x800
+-c              auto clipping
 -v              verbose
     EOS
     exit 0
@@ -426,6 +461,7 @@ if __FILE__ == $0
   author = nil
   width = nil
   height = nil
+  clip = false
   verbose = false
 
   # コマンドライン処理
@@ -481,6 +517,8 @@ if __FILE__ == $0
         end
         width = $1.to_i
         height = $2.to_i
+      when ?c
+        clip = true
       when ?v
         verbose = true
       when ?h
@@ -519,6 +557,6 @@ if __FILE__ == $0
     end
   end
 
-  maker = EPubMaker.new(epub, dir, zip, title: title, author: author, width: width, height: height, verbose: verbose)
+  maker = EPubMaker.new(epub, dir, zip, title: title, author: author, width: width, height: height, clip: clip, verbose: verbose)
   maker.run
 end
