@@ -125,18 +125,23 @@ class EPubMaker
         if @clip && img.gray?
           leveled = img.level(10, 80)
           clip, x1, y1, x2, y2 = leveled.clip
-          # 17 = 約6%
-          dw = img.width / 17
-          dh = img.height / 17
-          if (x1 >= dw && y1 >= dh) ||
-            ((img.width - x2) >= dw && (img.height - y2) >= dh)
-            if idx.even?
-              rpages << [x1, y1, x2, y2]
-            else
-              lpages << [x1, y1, x2, y2]
+          if clip
+            # 17 = 約6%
+            dw = img.width / 17
+            dh = img.height / 17
+            if (x1 >= dw && y1 >= dh) ||
+              ((img.width - x2) >= dw && (img.height - y2) >= dh)
+              if idx.even?
+                rpages << [x1, y1, x2, y2]
+              else
+                lpages << [x1, y1, x2, y2]
+              end
+              img = leveled
+              img.instance_variable_set(:@target, true)
             end
+          else
+            # 完全白紙?
             img = leveled
-            img.instance_variable_set(:@target, true)
           end
         end
 
