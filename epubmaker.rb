@@ -106,16 +106,23 @@ class EPubMaker
     FileUtils.mkdir_p(data_dir)
 
     srcs = Dir.glob(File.join(srcdir, "*")).sort
-    dots = 0
 
-    # クリッピング領域算出(左右ページがあるので結果は配列)
-    print "loading images..." if @verbose
+    # クリッピング領域算出(左右ページ別々に)
+    puts "loading images" if @verbose
     STDOUT.flush
 
     lpages = []
     rpages = []
     images = {}
+    dots = 0
     srcs.each_with_index do |src, idx|
+      now = idx * 80 / srcs.size
+      if now > dots
+        print '.' * (now - dots)
+        STDOUT.flush
+        dots = now
+      end
+
       if /\.jpg$/i =~ src
         img = nil
         open(src, "rb") do |f|
@@ -148,15 +155,16 @@ class EPubMaker
         images[idx] = img
       end
     end
+    puts
 
     # 10%ラインを抽出
     left = [rpages.map{|r| r[0]}.sort[rpages.size / 10], lpages.map{|r| r[0]}.sort[lpages.size / 10]]
     top = [rpages.map{|r| r[1]}.sort[rpages.size / 10], lpages.map{|r| r[1]}.sort[lpages.size / 10]]
     right = [rpages.map{|r| r[2]}.sort[-rpages.size / 10], lpages.map{|r| r[2]}.sort[-lpages.size / 10]]
     bottom = [rpages.map{|r| r[3]}.sort[-rpages.size / 10], lpages.map{|r| r[3]}.sort[-lpages.size / 10]]
-    puts if @verbose
 
     files = []
+    dots = 0
     srcs.each_with_index do |src, idx|
       unless @verbose
         now = idx * 80 / srcs.size
