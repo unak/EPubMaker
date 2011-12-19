@@ -178,6 +178,7 @@ class EPubMaker
       print '[%3d/%3d] %s => %s' % [idx + 1, srcs.size, src, dst] if @verbose
       if images[idx] && (@width || @height)
         img = images[idx]
+        images[idx] = nil # 後でこのImageオブジェクトをGCできるように
         print " (#{img.width} x #{img.height} => " if @verbose
 
         # clipping対象であればclippingする
